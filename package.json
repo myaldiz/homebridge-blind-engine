@@ -1,5 +1,5 @@
 {
-    "name": "homebridge-blind-engine",
+    "name": "homebridge-blind-platform",
     "version": "0.0.1",
     "description": "A homebridge plugin to control blinds that uses blind-engine app",
     "main": "index.js",
@@ -16,15 +16,13 @@
     ],
     "engines": {
       "node": ">4.0.0",
-      "homebridge": ">=0.2.5"
+      "homebridge": ">=0.2.5",
+      "noble": ">=1.5.0"
     },
     "repository": {
       "type": "git",
       "url": "git+https://github.com/myaldiz/homebridge-blind-engine"
     },
     "author": "Mustafa Berk YALDIZ",
-    "license": "MIT",
-    "dependencies": {
-      "mqtt": ">1.12.0"
-    }
+    "license": "MIT"
   }
