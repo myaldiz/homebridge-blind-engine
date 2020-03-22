@@ -26,8 +26,10 @@ const Conversion4_2 =
 // Power on for scanning
 noble.on('stateChange', function (state) {
     if (state === 'poweredOn') {
+        console.log("[Noble] bt powered on");
         noble.startScanning([BLIND_SERVICE_UUID]);
     } else {
+        console.log("[Noble] bt problem");
         noble.stopScanning();
     }
 });
@@ -108,6 +110,9 @@ BlindPlatform.prototype.setTargetPosition = function (pos, callback) {
         this.currentPositionState = 1;
     else
         this.currentPositionState = 0;
+    
+    this.service.getCharacteristic(Characteristic.TargetPosition).updateValue(pos);
+    this.service.getCharacteristic(Characteristic.PositionState).updateValue(this.currentPositionState);
 
     var platform = this;
     this.levelCharacteristic.write(
@@ -120,8 +125,12 @@ BlindPlatform.prototype.setTargetPosition = function (pos, callback) {
                 platform.log("Entered timeout");
                 platform.lastPosition = pos;
                 platform.currentPositionState = 2;
+                
+                platform.service.getCharacteristic(Characteristic.CurrentPosition).updateValue(pos);
+                platform.service.getCharacteristic(Characteristic.PositionState).updateValue(platform.currentPositionState);
             }, 
-            Math.abs(platform.currentTargetPosition - platform.lastPosition)*30 + 100,
+            10,
+            // Math.abs(platform.currentTargetPosition - platform.lastPosition)*10 + 100,
             platform, pos);
         }
     );
@@ -156,8 +165,8 @@ BlindPlatform.prototype.configureAccessory = function (accessory) {
 
 // Sample function to show how developer can add accessory dynamically from outside event
 BlindPlatform.prototype.addAccessory = function (peripheral) {
-    this.log("Adding new accessory..");
     var platform = this;
+    platform.log("Connected to %s", peripheral.advertisement.localName);
 
     uuid = UUIDGen.generate(peripheral.uuid);
 
@@ -188,6 +197,9 @@ BlindPlatform.prototype.addAccessory = function (peripheral) {
     });
 
     var service = newAccessory.addService(Service.WindowCovering, "Position");
+    newAccessory.service = service;
+
+    service.setCharacteristic(Characteristic.Name, peripheral.advertisement.localName);
 
     service.getCharacteristic(Characteristic.CurrentPosition)
         .on('get', this.getCurrentPosition.bind(newAccessory));
@@ -201,6 +213,10 @@ BlindPlatform.prototype.addAccessory = function (peripheral) {
     service.getCharacteristic(Characteristic.TargetPosition)
         .on('get', this.getTargetPosition.bind(newAccessory))
         .on('set', this.setTargetPosition.bind(newAccessory));
+
+    service.getCharacteristic(Characteristic.TargetPosition).updateValue(newAccessory.currentTargetPosition);
+    service.getCharacteristic(Characteristic.PositionState).updateValue(newAccessory.currentPositionState);
+    service.getCharacteristic(Characteristic.CurrentPosition).updateValue(newAccessory.lastPosition);
 
     this.log("Char setup is done!..");
 
