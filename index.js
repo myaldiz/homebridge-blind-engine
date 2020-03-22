@@ -26,10 +26,9 @@ const Conversion4_2 =
 // Power on for scanning
 noble.on('stateChange', function (state) {
     if (state === 'poweredOn') {
-        console.log("[Noble] bt powered on");
         noble.startScanning([BLIND_SERVICE_UUID]);
     } else {
-        console.log("[Noble] bt problem");
+        console.log("[Noble] bt poweredOn problem!");
         noble.stopScanning();
     }
 });
@@ -45,8 +44,6 @@ module.exports = function (homebridge) {
     Characteristic = homebridge.hap.Characteristic;
     UUIDGen = homebridge.hap.uuid;
 
-    // For platform plugin to be considered as dynamic platform plugin,
-    // registerPlatform(pluginName, platformName, constructor, dynamic), dynamic must be true
     homebridge.registerPlatform("homebridge-blind-platform", "BlindPlatform", BlindPlatform, true);
 }
 
@@ -65,12 +62,8 @@ function BlindPlatform(log, config, api) {
     });
 
     if (api) {
-        // Save the API object as plugin needs to register new accessory via this object
         this.api = api;
 
-        // Listen to event "didFinishLaunching", this means homebridge already finished loading cached accessories.
-        // Platform Plugin should only register new accessory that doesn't exist in homebridge after this event.
-        // Or start discover new accessories.
         this.api.on('didFinishLaunching', function () {
             platform.log("DidFinishLaunching");
         }.bind(this));
@@ -78,14 +71,14 @@ function BlindPlatform(log, config, api) {
 }
 
 function messageConverter(value) {
-    var scaled_val = (100-value) / 100 * (BLIND_VAL_MAX - BLIND_VAL_MIN) + BLIND_VAL_MIN;
+    var scaled_val = (100 - value) / 100 * (BLIND_VAL_MAX - BLIND_VAL_MIN) + BLIND_VAL_MIN;
     scaled_val = Math.floor(scaled_val);
     var n_str = '0' + scaled_val.toString();
     n_str = n_str + Conversion4_2[n_str[2]] + Conversion3_1[n_str[3]]
     str_arr = n_str.match(/.{1,2}/g);
     var ret_array = [BLIND_SET_VALUE_BASE, BLIND_SET_VALUE_BASE2];
-    for(var i = 0; i < str_arr.length; i++)
-        ret_array.push(parseInt('0x'+str_arr[i]));
+    for (var i = 0; i < str_arr.length; i++)
+        ret_array.push(parseInt('0x' + str_arr[i]));
     return ret_array;
 }
 
@@ -110,7 +103,7 @@ BlindPlatform.prototype.setTargetPosition = function (pos, callback) {
         this.currentPositionState = 1;
     else
         this.currentPositionState = 0;
-    
+
     this.service.getCharacteristic(Characteristic.TargetPosition).updateValue(pos);
     this.service.getCharacteristic(Characteristic.PositionState).updateValue(this.currentPositionState);
 
@@ -120,18 +113,18 @@ BlindPlatform.prototype.setTargetPosition = function (pos, callback) {
         true,
         function (error) {
             platform.log("Set TargetPosition: %s", pos);
-            setTimeout((platform, pos)=>
-            {
-                platform.log("Entered timeout");
-                platform.lastPosition = pos;
-                platform.currentPositionState = 2;
-                
-                platform.service.getCharacteristic(Characteristic.CurrentPosition).updateValue(pos);
-                platform.service.getCharacteristic(Characteristic.PositionState).updateValue(platform.currentPositionState);
-            }, 
-            10,
-            // Math.abs(platform.currentTargetPosition - platform.lastPosition)*10 + 100,
-            platform, pos);
+            setTimeout((platform, pos) => {
+                if (pos == platform.currentTargetPosition) {
+                    platform.lastPosition = pos;
+                    platform.currentPositionState = 2;
+
+                    platform.service.getCharacteristic(Characteristic.CurrentPosition).updateValue(pos);
+                    platform.service.getCharacteristic(Characteristic.PositionState).updateValue(platform.currentPositionState);
+                    platform.log("Position set to: %s", pos);
+                }
+            },
+                Math.abs(platform.currentTargetPosition - platform.lastPosition) * 240 + 75,
+                platform, pos);
         }
     );
     callback(null);
@@ -141,24 +134,12 @@ BlindPlatform.prototype.configureAccessory = function (accessory) {
     this.log(accessory.displayName, "Configure Accessory");
     var platform = this;
 
-    // Set the accessory to reachable if plugin can currently process the accessory,
-    // otherwise set to false and update the reachability later by invoking 
-    // accessory.updateReachability()
     accessory.reachable = true;
 
     accessory.on('identify', function (paired, callback) {
         platform.log(accessory.displayName, "Identify!!!");
         callback();
     });
-
-    // if (accessory.getService(Service.Lightbulb)) {
-    //   accessory.getService(Service.Lightbulb)
-    //   .getCharacteristic(Characteristic.On)
-    //   .on('set', function(value, callback) {
-    //     platform.log(accessory.displayName, "Light -> " + value);
-    //     callback();
-    //   });
-    // }
 
     this.accessories.push(accessory);
 }
@@ -171,15 +152,11 @@ BlindPlatform.prototype.addAccessory = function (peripheral) {
     uuid = UUIDGen.generate(peripheral.uuid);
 
     var newAccessory = new Accessory(peripheral.advertisement.localName, uuid);
-    newAccessory.on('identify', function (paired, callback) {
-        platform.log(newAccessory.displayName, "Identify!!!");
-        callback();
-    });
 
     newAccessory.log = this.log;
-    newAccessory.lastPosition = 0; // last known position of the blinds, open by default
+    newAccessory.lastPosition = 100; // last known position of the blinds, open by default
     newAccessory.currentPositionState = 2; // stopped by default
-    newAccessory.currentTargetPosition = 0; // closed by default
+    newAccessory.currentTargetPosition = 100; // closed by default
 
     peripheral.discoverServices([BLIND_SERVICE_UUID], function (error, services) {
         var deviceInformationService = services[0];
@@ -191,39 +168,41 @@ BlindPlatform.prototype.addAccessory = function (peripheral) {
             platform.log('discovered set-value characteristics');
 
             levelCharacteristic.write(new Buffer(messageConverter(100)), true, function (error) {
-                platform.log('set blind level to 100');
+                platform.log('set initial blind level to open');
             });
+
+            newAccessory.on('identify', function (paired, callback) {
+                platform.log(newAccessory.displayName, "Identify!!!");
+                callback();
+            });
+
+            var service = newAccessory.addService(Service.WindowCovering, "Position");
+            newAccessory.service = service;
+
+            //service.setCharacteristic(Characteristic.Name, peripheral.advertisement.localName);
+
+            service.getCharacteristic(Characteristic.CurrentPosition)
+                .on('get', platform.getCurrentPosition.bind(newAccessory));
+
+
+            // the position state (0 = DECREASING, 1 = INCREASING, 2 = STOPPED)
+            service.getCharacteristic(Characteristic.PositionState)
+                .on('get', platform.getPositionState.bind(newAccessory));
+
+            // the target position (0-100%)
+            service.getCharacteristic(Characteristic.TargetPosition)
+                .on('get', platform.getTargetPosition.bind(newAccessory))
+                .on('set', platform.setTargetPosition.bind(newAccessory));
+
+            service.getCharacteristic(Characteristic.TargetPosition).updateValue(newAccessory.currentTargetPosition);
+            service.getCharacteristic(Characteristic.PositionState).updateValue(newAccessory.currentPositionState);
+            service.getCharacteristic(Characteristic.CurrentPosition).updateValue(newAccessory.lastPosition);
+
+            service.getCharacteristic(Characteristic.Name).updateValue(peripheral.advertisement.localName);
+
+            platform.log("Accesory setup is done!..");
         });
     });
-
-    var service = newAccessory.addService(Service.WindowCovering, "Position");
-    newAccessory.service = service;
-
-    service.setCharacteristic(Characteristic.Name, peripheral.advertisement.localName);
-
-    service.getCharacteristic(Characteristic.CurrentPosition)
-        .on('get', this.getCurrentPosition.bind(newAccessory));
-
-
-    // the position state (0 = DECREASING, 1 = INCREASING, 2 = STOPPED)
-    service.getCharacteristic(Characteristic.PositionState)
-        .on('get', this.getPositionState.bind(newAccessory));
-
-    // the target position (0-100%)
-    service.getCharacteristic(Characteristic.TargetPosition)
-        .on('get', this.getTargetPosition.bind(newAccessory))
-        .on('set', this.setTargetPosition.bind(newAccessory));
-
-    service.getCharacteristic(Characteristic.TargetPosition).updateValue(newAccessory.currentTargetPosition);
-    service.getCharacteristic(Characteristic.PositionState).updateValue(newAccessory.currentPositionState);
-    service.getCharacteristic(Characteristic.CurrentPosition).updateValue(newAccessory.lastPosition);
-
-    this.log("Char setup is done!..");
-
-    // Plugin can save context on accessory to help restore accessory in configureAccessory()
-    // newAccessory.context.something = "Something"
-
-    // Make sure you provided a name for service, otherwise it may not visible in some HomeKit apps
 
     this.accessories.push(newAccessory);
     this.api.registerPlatformAccessories("homebridge-blind-platform", "BlindPlatform", [newAccessory]);
